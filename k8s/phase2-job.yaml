@@ -1,0 +1,136 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: eagle-hallushift-phase2
+  labels:
+    project: eagle-hallushift
+    phase: "2"
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        project: eagle-hallushift
+        phase: "2"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: phase2
+        image: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+          requests:
+            nvidia.com/gpu: 8
+            memory: "640Gi"
+            cpu: "64"
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: eagle-hallushift-secrets
+              key: hf-token
+        - name: WANDB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: eagle-hallushift-secrets
+              key: wandb-api-key
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== Phase 2: Delta + Entropy Training ==="
+
+          # Install dependencies
+          pip install transformers accelerate scipy tqdm deepspeed wandb
+
+          # Clone repo
+          git clone https://github.com/KilJaeeun/eagle-hallu-shift-idea.git
+          cd eagle-hallu-shift-idea
+
+          # Clone EAGLE
+          if [ ! -d "EAGLE" ]; then
+            git clone https://github.com/SafeAILab/EAGLE.git
+          fi
+          pip install -e EAGLE
+
+          # Login
+          huggingface-cli login --token $HF_TOKEN
+          wandb login --key $WANDB_API_KEY
+
+          # Download training data
+          mkdir -p data
+          # huggingface-cli download kje2952/eagle-hallu-shift data/sharegpt_train.json --local-dir data/
+
+          # Phase 2 Ablation Study
+          # Config A: Baseline (no aux loss)
+          echo "=== Config A: Baseline ==="
+          deepspeed --num_gpus=8 scripts/phase1_train.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --data_path data/sharegpt_train.json \
+            --lambda_consistency 0.0 \
+            --num_epochs 3 \
+            --output_dir checkpoints/ablation_A_baseline \
+            --wandb_run_name "ablation_A_baseline"
+
+          # Config B: Consistency only
+          echo "=== Config B: Consistency Only ==="
+          deepspeed --num_gpus=8 scripts/phase1_train.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --data_path data/sharegpt_train.json \
+            --lambda_consistency 0.1 \
+            --num_epochs 3 \
+            --output_dir checkpoints/ablation_B_consistency \
+            --wandb_run_name "ablation_B_consistency"
+
+          # Config C: Delta only
+          echo "=== Config C: Delta Only ==="
+          deepspeed --num_gpus=8 scripts/phase2_train.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --data_path data/sharegpt_train.json \
+            --lambda_consistency 0.0 \
+            --lambda_delta 0.1 \
+            --num_epochs 3 \
+            --output_dir checkpoints/ablation_C_delta \
+            --wandb_run_name "ablation_C_delta"
+
+          # Config D: Attention Entropy only
+          echo "=== Config D: Entropy Only ==="
+          deepspeed --num_gpus=8 scripts/phase2_train.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --data_path data/sharegpt_train.json \
+            --lambda_consistency 0.0 \
+            --lambda_delta 0.0 \
+            --use_attention_entropy \
+            --num_epochs 3 \
+            --output_dir checkpoints/ablation_D_entropy \
+            --wandb_run_name "ablation_D_entropy"
+
+          # Config E: Consistency + Delta
+          echo "=== Config E: Consistency + Delta ==="
+          deepspeed --num_gpus=8 scripts/phase2_train.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --data_path data/sharegpt_train.json \
+            --lambda_consistency 0.1 \
+            --lambda_delta 0.1 \
+            --num_epochs 3 \
+            --output_dir checkpoints/ablation_E_cons_delta \
+            --wandb_run_name "ablation_E_cons_delta"
+
+          # Config F: Full (All three)
+          echo "=== Config F: Full ==="
+          deepspeed --num_gpus=8 scripts/phase2_train.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --data_path data/sharegpt_train.json \
+            --lambda_consistency 0.1 \
+            --lambda_delta 0.1 \
+            --use_attention_entropy \
+            --num_epochs 3 \
+            --output_dir checkpoints/ablation_F_full \
+            --wandb_run_name "ablation_F_full"
+
+          # Upload all checkpoints
+          huggingface-cli upload kje2952/eagle-hallu-shift checkpoints/ --repo-type model
+
+          echo "=== Phase 2 Ablation Complete ==="
