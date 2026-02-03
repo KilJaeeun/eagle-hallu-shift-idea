@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: eagle-hallushift-phase0
+  labels:
+    project: eagle-hallushift
+    phase: "0"
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        project: eagle-hallushift
+        phase: "0"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: phase0
+        image: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+          requests:
+            nvidia.com/gpu: 1
+            memory: "80Gi"
+            cpu: "8"
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: eagle-hallushift-secrets
+              key: hf-token
+        - name: WANDB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: eagle-hallushift-secrets
+              key: wandb-api-key
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== Phase 0: Validation Study ==="
+
+          # Install dependencies
+          pip install transformers accelerate scipy tqdm
+
+          # Clone repo
+          git clone https://github.com/KilJaeeun/eagle-hallu-shift-idea.git
+          cd eagle-hallu-shift-idea
+
+          # Clone EAGLE if not present
+          if [ ! -d "EAGLE" ]; then
+            git clone https://github.com/SafeAILab/EAGLE.git
+          fi
+
+          # Login to HuggingFace
+          huggingface-cli login --token $HF_TOKEN
+
+          # Run Phase 0
+          python scripts/phase0_inference_hook.py \
+            --base_model meta-llama/Llama-2-7b-chat-hf \
+            --ea_model yuhuili/EAGLE-llama2-chat-7B \
+            --max_samples 200 \
+            --output_dir phase0_results
+
+          # Upload results to HuggingFace
+          echo "Uploading results..."
+          huggingface-cli upload kje2952/eagle-hallu-shift ./phase0_results --repo-type model
+
+          echo "=== Phase 0 Complete ==="

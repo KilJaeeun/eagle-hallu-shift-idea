@@ -1,0 +1,89 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: eagle-hallushift-phase1
+  labels:
+    project: eagle-hallushift
+    phase: "1"
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        project: eagle-hallushift
+        phase: "1"
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: phase1
+        image: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+          requests:
+            nvidia.com/gpu: 8
+            memory: "640Gi"  # 80GB per GPU
+            cpu: "64"
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: eagle-hallushift-secrets
+              key: hf-token
+        - name: WANDB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: eagle-hallushift-secrets
+              key: wandb-api-key
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== Phase 1: Layer Consistency Training ==="
+
+          # Install dependencies
+          pip install transformers accelerate scipy tqdm deepspeed wandb
+
+          # Clone repo
+          git clone https://github.com/KilJaeeun/eagle-hallu-shift-idea.git
+          cd eagle-hallu-shift-idea
+
+          # Clone EAGLE if not present
+          if [ ! -d "EAGLE" ]; then
+            git clone https://github.com/SafeAILab/EAGLE.git
+          fi
+          pip install -e EAGLE
+
+          # Login to services
+          huggingface-cli login --token $HF_TOKEN
+          wandb login --key $WANDB_API_KEY
+
+          # Download training data
+          # TODO: Replace with actual data path
+          mkdir -p data
+          # huggingface-cli download kje2952/eagle-hallu-shift data/sharegpt_train.json --local-dir data/
+
+          # Run Phase 1 training with different lambda values
+          for LAMBDA in 0.01 0.1 0.5 1.0; do
+            echo "=== Training with lambda=$LAMBDA ==="
+
+            deepspeed --num_gpus=8 scripts/phase1_train.py \
+              --base_model meta-llama/Llama-2-7b-chat-hf \
+              --data_path data/sharegpt_train.json \
+              --lambda_consistency $LAMBDA \
+              --num_epochs 3 \
+              --batch_size 1 \
+              --lr 1e-5 \
+              --gradient_checkpointing \
+              --output_dir checkpoints/phase1_lambda$LAMBDA \
+              --wandb_run_name "phase1_lambda$LAMBDA"
+
+            # Upload checkpoint
+            huggingface-cli upload kje2952/eagle-hallu-shift \
+              checkpoints/phase1_lambda$LAMBDA \
+              --repo-type model
+
+          done
+
+          echo "=== Phase 1 Complete ==="
