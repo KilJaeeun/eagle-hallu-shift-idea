@@ -62,7 +62,8 @@ def parse_args():
 
     # Output arguments
     parser.add_argument("--output_dir", type=str, default="./checkpoints/phase1")
-    parser.add_argument("--wandb_project", type=str, default="eagle-hallushift")
+    parser.add_argument("--wandb_project", type=str, default="kje-e-project")
+    parser.add_argument("--wandb_entity", type=str, default="model-acceleration")
     parser.add_argument("--wandb_run_name", type=str, default=None)
 
     # DeepSpeed arguments
@@ -95,6 +96,7 @@ def main():
     if rank == 0:
         run_name = args.wandb_run_name or f"phase1_lambda{args.lambda_consistency}"
         wandb.init(
+            entity=args.wandb_entity,
             project=args.wandb_project,
             name=run_name,
             config=vars(args),

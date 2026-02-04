@@ -65,6 +65,9 @@ spec:
           fi
           pip install -e EAGLE
 
+          # Upgrade transformers to version compatible with latest EAGLE (avoid 5.x which has bugs)
+          pip install "transformers>=4.48.0,<5.0.0"
+
           # Install additional dependencies (scipy, huggingface_hub for upload)
           pip install scipy huggingface_hub[cli] --no-deps || pip install scipy huggingface_hub
 
