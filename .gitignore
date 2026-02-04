@@ -2,3 +2,6 @@ docs/_ENV/API_KEYS.md
 phase0_results/
 __pycache__/
 *.pyc
+
+EAGLE/
+k8s/secrets.yaml
