@@ -63,7 +63,7 @@ spec:
           if [ ! -d "EAGLE" ]; then
             git clone https://github.com/SafeAILab/EAGLE.git
             cd EAGLE
-            git checkout 58d1de0  # Commit before Qwen3, compatible with transformers 4.46.2
+            git checkout 79d6f79  # Commit before EAGLE3, compatible with yuhuili/EAGLE-llama2-chat-7B
             cd ..
           fi
           pip install -e EAGLE
