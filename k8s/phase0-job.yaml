@@ -59,14 +59,14 @@ spec:
           git clone https://github.com/KilJaeeun/eagle-hallu-shift-idea.git
           cd eagle-hallu-shift-idea
 
-          # Clone and install EAGLE first (it has specific version requirements)
+          # Clone and install EAGLE (use commit before Qwen3 for compatibility)
           if [ ! -d "EAGLE" ]; then
             git clone https://github.com/SafeAILab/EAGLE.git
+            cd EAGLE
+            git checkout 58d1de0  # Commit before Qwen3, compatible with transformers 4.46.2
+            cd ..
           fi
           pip install -e EAGLE
-
-          # Upgrade transformers to version compatible with latest EAGLE (avoid 5.x which has bugs)
-          pip install "transformers>=4.48.0,<5.0.0"
 
           # Install additional dependencies (scipy, huggingface_hub for upload)
           pip install scipy huggingface_hub[cli] --no-deps || pip install scipy huggingface_hub
