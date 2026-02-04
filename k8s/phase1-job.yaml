@@ -14,9 +14,21 @@ spec:
         phase: "1"
     spec:
       restartPolicy: Never
+      tolerations:
+      - key: "accelerator"
+        operator: "Equal"
+        value: "h200"
+        effect: "NoSchedule"
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "gpu-request"
+        operator: "Equal"
+        value: "8"
+        effect: "NoSchedule"
       containers:
       - name: phase1
-        image: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+        image: pytorch/pytorch:2.2.0-cuda12.1-cudnn8-devel
         resources:
           limits:
             nvidia.com/gpu: 8
@@ -42,8 +54,15 @@ spec:
           set -e
           echo "=== Phase 1: Layer Consistency Training ==="
 
-          # Install dependencies
-          pip install transformers accelerate scipy tqdm deepspeed wandb
+          # Install system dependencies
+          apt-get update && apt-get install -y git
+
+          # Install Python dependencies
+          pip install transformers accelerate scipy tqdm deepspeed wandb huggingface_hub[cli]
+
+          # Refresh shell hash table
+          hash -r
+          export PATH="/opt/conda/bin:$PATH"
 
           # Clone repo
           git clone https://github.com/KilJaeeun/eagle-hallu-shift-idea.git
@@ -56,8 +75,8 @@ spec:
           pip install -e EAGLE
 
           # Login to services
-          huggingface-cli login --token $HF_TOKEN
-          wandb login --key $WANDB_API_KEY
+          python -c "from huggingface_hub import login; login(token='$HF_TOKEN')"
+          wandb login $WANDB_API_KEY
 
           # Download training data
           # TODO: Replace with actual data path

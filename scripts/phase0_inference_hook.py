@@ -197,8 +197,11 @@ def run_inference_with_collection(
     """
     try:
         from eagle.model.ea_model import EaModel
-    except ImportError:
-        print("Error: Could not import Eagle3 model. Make sure EAGLE is in the path.")
+    except ImportError as e:
+        print(f"Error: Could not import Eagle3 model. Make sure EAGLE is in the path.")
+        print(f"Import error details: {e}")
+        import traceback
+        traceback.print_exc()
         return
 
     print(f"Loading base model: {base_model_path}")

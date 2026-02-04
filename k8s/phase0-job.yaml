@@ -14,9 +14,17 @@ spec:
         phase: "0"
     spec:
       restartPolicy: Never
+      tolerations:
+      - key: "accelerator"
+        operator: "Equal"
+        value: "h200"
+        effect: "NoSchedule"
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
       containers:
       - name: phase0
-        image: pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
+        image: nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
         resources:
           limits:
             nvidia.com/gpu: 1
@@ -42,20 +50,30 @@ spec:
           set -e
           echo "=== Phase 0: Validation Study ==="
 
-          # Install dependencies
-          pip install transformers accelerate scipy tqdm
+          # Install system dependencies
+          apt-get update && apt-get install -y git python3 python3-pip
+          ln -sf /usr/bin/python3 /usr/bin/python
+          ln -sf /usr/bin/pip3 /usr/bin/pip
 
           # Clone repo
           git clone https://github.com/KilJaeeun/eagle-hallu-shift-idea.git
           cd eagle-hallu-shift-idea
 
-          # Clone EAGLE if not present
+          # Clone and install EAGLE first (it has specific version requirements)
           if [ ! -d "EAGLE" ]; then
             git clone https://github.com/SafeAILab/EAGLE.git
           fi
+          pip install -e EAGLE
 
-          # Login to HuggingFace
-          huggingface-cli login --token $HF_TOKEN
+          # Install additional dependencies (scipy, huggingface_hub for upload)
+          pip install scipy huggingface_hub[cli] --no-deps || pip install scipy huggingface_hub
+
+          # Refresh shell hash table
+          hash -r
+          export PATH="/opt/conda/bin:$PATH"
+
+          # Login to HuggingFace using python module
+          python -c "from huggingface_hub import login; login(token='$HF_TOKEN')"
 
           # Run Phase 0
           python scripts/phase0_inference_hook.py \
@@ -66,6 +84,6 @@ spec:
 
           # Upload results to HuggingFace
           echo "Uploading results..."
-          huggingface-cli upload kje2952/eagle-hallu-shift ./phase0_results --repo-type model
+          python -c "from huggingface_hub import HfApi; api = HfApi(); api.upload_folder(folder_path='./phase0_results', repo_id='kje2952/eagle-hallu-shift', repo_type='model', path_in_repo='phase0_results')"
 
           echo "=== Phase 0 Complete ==="
