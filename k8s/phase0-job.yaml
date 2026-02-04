@@ -68,7 +68,8 @@ spec:
           fi
           pip install -e EAGLE
 
-          # Upgrade accelerate to version required by transformers
+          # Upgrade PyTorch for H200 support and accelerate for transformers
+          pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cu121
           pip install "accelerate>=0.26.0"
 
           # Install additional dependencies (scipy, huggingface_hub for upload)
