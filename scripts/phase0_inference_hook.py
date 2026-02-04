@@ -45,7 +45,11 @@ class LayerDynamicsCollector:
 
     def set_hidden_states(self, hidden_states: List[torch.Tensor]):
         """Store current hidden states from target model."""
-        self.current_hidden_states = [h.detach().clone() for h in hidden_states[:3]]
+        if hidden_states is not None and len(hidden_states) >= 3:
+            self.current_hidden_states = [h.detach().clone() for h in hidden_states[:3]]
+            if not hasattr(self, '_debug_printed'):
+                print(f"  [DEBUG] Hidden states set: shapes = {[h.shape for h in self.current_hidden_states]}")
+                self._debug_printed = True
 
     def compute_dynamics(self, position_idx: int) -> Dict:
         """Compute layer dynamics for a specific position."""
@@ -120,16 +124,27 @@ def patch_evaluate_posterior(collector: LayerDynamicsCollector):
         best_candidate, accept_length, sample_p = result
 
         # Log which positions were accepted/rejected
-        # Positions 0 to accept_length were accepted
-        # Positions accept_length+1 onwards were rejected
+        # accept_length: number of accepted draft tokens (0 means only sampled token accepted)
+        # For greedy: accept_length is the actual count
+        # For sampling: accept_length - 1 is returned, so actual accepted = accept_length + 1
         n_candidates = candidates.shape[1] - 1  # Exclude the initial token
 
-        is_accepted = [i <= accept_length.item() for i in range(n_candidates)]
-        position_indices = list(range(n_candidates))
+        # Handle both tensor and int accept_length
+        if isinstance(accept_length, torch.Tensor):
+            accept_len = accept_length.item()
+        else:
+            accept_len = int(accept_length)
 
-        # Record dynamics
+        # Positions 0 to accept_len are accepted, rest are rejected
+        is_accepted = [i <= accept_len for i in range(min(n_candidates, len(logits[0]) - 1))]
+        position_indices = list(range(len(is_accepted)))
+
+        # Record dynamics if we have hidden states
         if collector.current_hidden_states is not None:
-            collector.record_acceptance(position_indices, is_accepted)
+            try:
+                collector.record_acceptance(position_indices, is_accepted)
+            except Exception as e:
+                pass  # Silently continue on collection errors
 
         return result
 
@@ -153,8 +168,32 @@ def patch_tree_decoding(collector: LayerDynamicsCollector):
         logits, hidden_state, outputs = result
 
         # Capture hidden states from target model
-        if "hidden_states" in outputs and len(outputs["hidden_states"]) >= 3:
-            collector.set_hidden_states(outputs["hidden_states"])
+        # Try different ways to get hidden states
+        hidden_states = None
+
+        # Method 1: Check if outputs is a dict with hidden_states
+        if isinstance(outputs, dict) and "hidden_states" in outputs:
+            if outputs["hidden_states"] is not None and len(outputs["hidden_states"]) >= 3:
+                hidden_states = outputs["hidden_states"]
+
+        # Method 2: Check if outputs has hidden_states attribute (ModelOutput)
+        elif hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
+            if len(outputs.hidden_states) >= 3:
+                hidden_states = outputs.hidden_states
+
+        # Method 3: For EAGLE2, hidden_state is concatenated - try to use that
+        if hidden_states is None and hidden_state is not None:
+            # hidden_state shape: [batch, seq, hidden_dim * 3] for EAGLE3
+            # or [batch, seq, hidden_dim] for EAGLE2
+            if hidden_state.shape[-1] > 4096:  # Likely concatenated layers
+                dim = hidden_state.shape[-1] // 3
+                h0 = hidden_state[..., :dim]
+                h1 = hidden_state[..., dim:2*dim]
+                h2 = hidden_state[..., 2*dim:]
+                hidden_states = [h0, h1, h2]
+
+        if hidden_states is not None:
+            collector.set_hidden_states(hidden_states)
 
         return result
 
@@ -207,23 +246,29 @@ def run_inference_with_collection(
     print(f"Loading base model: {base_model_path}")
     print(f"Loading EA model: {ea_model_path}")
 
-    # Load model
+    # Load model with output_hidden_states=True to capture layer representations
     model = EaModel.from_pretrained(
         base_model_path=base_model_path,
         ea_model_path=ea_model_path,
         torch_dtype=torch.float16,
         device_map="auto",
+        output_hidden_states=True,  # Enable hidden states output for layer dynamics
     )
     model.eval()
+
+    # Ensure base model outputs hidden states
+    if hasattr(model.base_model, 'config'):
+        model.base_model.config.output_hidden_states = True
 
     # Get tokenizer
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(base_model_path)
 
-    # Patch functions
-    from eagle.model import utils as eagle_utils
-    eagle_utils.evaluate_posterior = patch_evaluate_posterior(collector)
-    eagle_utils.tree_decoding = patch_tree_decoding(collector)
+    # Patch functions - IMPORTANT: Must patch ea_model module, not utils
+    # because ea_model.py uses "from .utils import *" which copies functions
+    from eagle.model import ea_model as ea_model_module
+    ea_model_module.evaluate_posterior = patch_evaluate_posterior(collector)
+    ea_model_module.tree_decoding = patch_tree_decoding(collector)
 
     print(f"\nRunning inference on {len(prompts)} prompts...")
 
@@ -247,6 +292,10 @@ def run_inference_with_collection(
             print(f"Processed {i + 1}/{len(prompts)} prompts")
             print(f"  Accepted: {len(collector.accepted_dynamics)}, "
                   f"Rejected: {len(collector.rejected_dynamics)}")
+
+        # Debug: Print first prompt's collection status
+        if i == 0:
+            print(f"  [DEBUG] First prompt hidden_states captured: {collector.current_hidden_states is not None}")
 
 
 def main():
