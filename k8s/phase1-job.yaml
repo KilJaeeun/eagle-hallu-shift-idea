@@ -89,22 +89,7 @@ spec:
 
           # Download training data
           mkdir -p data
-          # Download ShareGPT training data (or use subset for testing)
-          python -c "
-from huggingface_hub import hf_hub_download
-import os
-os.makedirs('data', exist_ok=True)
-# For now, create a sample training data file for testing
-# In production, download actual ShareGPT data
-import json
-sample_data = [
-    {'conversations': [{'from': 'human', 'value': 'What is machine learning?'}, {'from': 'gpt', 'value': 'Machine learning is a subset of AI.'}]},
-    {'conversations': [{'from': 'human', 'value': 'Explain neural networks.'}, {'from': 'gpt', 'value': 'Neural networks are computing systems inspired by biological neural networks.'}]}
-] * 100  # Create 200 samples for testing
-with open('data/sharegpt_train.json', 'w') as f:
-    json.dump(sample_data, f)
-print('Created sample training data with 200 samples')
-"
+          python scripts/create_sample_data.py
 
           # Run Phase 1 training with different lambda values
           for LAMBDA in 0.01 0.1 0.5 1.0; do
